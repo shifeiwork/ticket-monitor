@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>12306 余票监测</title>
+<style>
+  :root {
+    --bg: #0f1522;
+    --panel: #1a2233;
+    --panel-2: #202a40;
+    --border: #2c3a55;
+    --text: #e8eef7;
+    --muted: #8b98b3;
+    --accent: #2f7bff;
+    --green: #22c55e;
+    --red: #ef4444;
+    --amber: #f59e0b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px;
+    transition: background 0.4s;
+  }
+  body.alert {
+    background: #2a0d0d;
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: inset 0 0 0 0 rgba(239,68,68,0); }
+    50% { box-shadow: inset 0 0 200px 0 rgba(239,68,68,0.55); }
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    letter-spacing: 1px;
+  }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 18px;
+  }
+  .panel h2 {
+    font-size: 15px;
+    margin-bottom: 16px;
+    color: var(--muted);
+    font-weight: 600;
+    letter-spacing: 1px;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+  }
+  .field label {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .field input, .field select {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+  }
+  .field input:focus, .field select:focus {
+    border-color: var(--accent);
+  }
+  .field input[type="time"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.8);
+  }
+
+  .station-picker { position: relative; }
+  .station-options {
+    display: none;
+    position: absolute;
+    z-index: 20;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    max-height: 260px;
+    overflow-y: auto;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+  }
+  .station-options.show { display: block; }
+  .station-option {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 12px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  .station-option:hover, .station-option.active { background: rgba(47,123,255,0.2); }
+  .station-option small { color: var(--muted); }
+  .station-empty { padding: 10px 12px; color: var(--muted); font-size: 13px; }
+
+  .check-group {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+  .check-group label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 14px;
+    cursor: pointer;
+    color: var(--text);
+  }
+  .check-group input[type="checkbox"] {
+    width: 17px;
+    height: 17px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  .btn-row {
+    display: flex;
+    gap: 12px;
+    margin-top: 20px;
+  }
+  .btn {
+    padding: 12px 28px;
+    border: none;
+    border-radius: 9px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    letter-spacing: 2px;
+    transition: all 0.2s;
+  }
+  .btn-start { background: var(--green); color: #04120a; }
+  .btn-start:hover { filter: brightness(1.1); }
+  .btn-stop { background: var(--red); color: #fff; }
+  .btn-stop:hover { filter: brightness(1.1); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  /* 状态条 */
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border-radius: 9px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    font-size: 14px;
+    margin-bottom: 18px;
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+  }
+  .dot.running { background: var(--green); animation: blink 1.2s infinite; }
+  .dot.alert { background: var(--red); animation: blink 0.5s infinite; }
+  @keyframes blink { 50% { opacity: 0.25; } }
+
+  /* 大警报横幅 */
+  .big-alert {
+    display: none;
+    background: var(--red);
+    color: #fff;
+    padding: 30px 20px;
+    border-radius: 12px;
+    text-align: center;
+    margin-bottom: 18px;
+    animation: shake 0.4s;
+  }
+  .big-alert.show { display: block; }
+  .big-alert .big {
+    font-size: 46px;
+    font-weight: 900;
+    letter-spacing: 8px;
+    line-height: 1.2;
+  }
+  .big-alert .detail { font-size: 18px; margin-top: 10px; letter-spacing: 1px; }
+  @keyframes shake {
+    0%,100% { transform: translateX(0); }
+    20% { transform: translateX(-8px); }
+    40% { transform: translateX(8px); }
+    60% { transform: translateX(-5px); }
+    80% { transform: translateX(5px); }
+  }
+
+  /* 车次表格 */
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td {
+    padding: 11px 10px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+  }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.train { font-weight: 700; color: var(--accent); }
+  .seat-has { color: var(--green); font-weight: 700; }
+  .seat-none { color: var(--muted); }
+  .seat-houbu { color: var(--amber); }
+  tr.available { background: rgba(34,197,94,0.08); }
+  .empty { text-align: center; color: var(--muted); padding: 30px 0; }
+
+  .btn-ex {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 3px 9px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn-ex:hover { border-color: var(--red); color: var(--red); }
+  .btn-ex.on { border-color: var(--red); color: var(--red); background: rgba(239,68,68,0.12); }
+  tr.excluded td { opacity: 0.45; text-decoration: line-through; }
+  tr.excluded .btn-ex.on { opacity: 1; }
+
+  .btn-buy {
+    background: var(--red);
+    color: #fff;
+    border: none;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn-buy:hover { filter: brightness(1.15); transform: scale(1.05); }
+  .btn-buy:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .excluded-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: var(--panel-2);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .excluded-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(239,68,68,0.15);
+    color: var(--red);
+    padding: 2px 8px 2px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .excluded-tag button {
+    background: none; border: none; color: inherit; cursor: pointer;
+    font-size: 14px; line-height: 1; padding: 0 2px;
+  }
+
+  .log {
+    max-height: 160px;
+    overflow-y: auto;
+    font-family: "Consolas", monospace;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.8;
+  }
+  .log .ok { color: var(--green); }
+  .log .err { color: var(--red); }
+  .log .hit { color: var(--amber); font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>12306 余票监测</h1>
+  <div class="sub">本地代理 · 只提醒不下单 · 请提前挂官方候补</div>
+
+  <!-- 配置面板 -->
+  <div class="panel">
+    <h2>监测配置</h2>
+    <div class="grid">
+      <div class="field station-picker">
+        <label for="from">出发站</label>
+        <input type="text" id="from" placeholder="输入或选择出发站" value="南京南" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="fromOptions">
+        <div class="station-options" id="fromOptions" role="listbox"></div>
+      </div>
+      <div class="field station-picker">
+        <label for="to">到达站</label>
+        <input type="text" id="to" placeholder="输入或选择到达站" value="徐州东" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="toOptions">
+        <div class="station-options" id="toOptions" role="listbox"></div>
+      </div>
+      <div class="field">
+        <label>乘车日期</label>
+        <input type="date" id="date">
+      </div>
+      <div class="field">
+        <label>刷新间隔</label>
+        <select id="interval">
+          <option value="30">30 秒</option>
+          <option value="60" selected>60 秒</option>
+          <option value="120">2 分钟</option>
+          <option value="300">5 分钟</option>
+          <option value="custom">自定义（秒）</option>
+        </select>
+      </div>
+      <div class="field" id="customWrap" style="display:none;">
+        <label>自定义间隔（秒）</label>
+        <input type="number" id="customInterval" min="10" value="45">
+      </div>
+      <div class="field">
+        <label>开始时间</label>
+        <input type="time" id="timeFrom" value="18:00">
+      </div>
+      <div class="field">
+        <label>结束时间</label>
+        <input type="time" id="timeTo" value="23:00">
+      </div>
+    </div>
+
+    <div style="margin-top:18px;">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">监测席别（至少选一个）</div>
+      <div class="check-group">
+        <label><input type="checkbox" class="seat" value="二等座" checked> 二等座</label>
+        <label><input type="checkbox" class="seat" value="一等座" checked> 一等座</label>
+        <label><input type="checkbox" class="seat" value="商务座"> 商务座</label>
+        <label><input type="checkbox" class="seat" value="无座"> 无座</label>
+        <label><input type="checkbox" class="seat" value="软卧"> 软卧</label>
+        <label><input type="checkbox" class="seat" value="硬卧"> 硬卧</label>
+        <label><input type="checkbox" class="seat" value="硬座"> 硬座</label>
+      </div>
+    </div>
+
+    <div style="margin-top:14px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;color:var(--text);">
+        <input type="checkbox" id="autoJump" style="width:16px;height:16px;accent-color:var(--amber);cursor:pointer;">
+        <span style="color:var(--amber);font-weight:700;">⚡ 发现余票自动跳转购票页</span>
+      </label>
+      <span style="font-size:12px;color:var(--muted);">
+        勾选后，一旦监测到符合条件的车次有票，立即在新标签打开 12306 预订页（已按车次+席别筛选）
+      </span>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-start" id="btnStart">开始监测</button>
+      <button class="btn btn-stop" id="btnStop" disabled>停止监测</button>
+    </div>
+  </div>
+
+  <!-- 状态条 -->
+  <div class="status" id="statusBar">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">待命</span>
+  </div>
+
+  <!-- 大警报 -->
+  <div class="big-alert" id="bigAlert">
+    <div class="big">有 票 了！</div>
+    <div class="detail" id="alertDetail"></div>
+    <div id="alertButtons" style="margin-top:18px;"></div>
+  </div>
+
+  <!-- 车次列表 -->
+  <div class="panel">
+    <h2>实时余票 <span id="updateTime" style="font-weight:400;"></span></h2>
+    <div id="tableWrap">
+      <div class="empty">配置好参数后点击「开始监测」</div>
+    </div>
+    <div class="excluded-bar" id="excludedBar" style="display:none;">
+      <span>已排除车次：</span>
+      <span id="excludedList"></span>
+      <button class="btn-ex" id="btnClearEx" style="margin-left:auto;">清空排除</button>
+    </div>
+  </div>
+
+  <!-- 日志 -->
+  <div class="panel">
+    <h2>运行日志</h2>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var fromEl = document.getElementById("from");
+  var toEl = document.getElementById("to");
+  var dateEl = document.getElementById("date");
+  var intervalEl = document.getElementById("interval");
+  var customWrap = document.getElementById("customWrap");
+  var customIntervalEl = document.getElementById("customInterval");
+  var timeFromEl = document.getElementById("timeFrom");
+  var timeToEl = document.getElementById("timeTo");
+  var btnStart = document.getElementById("btnStart");
+  var btnStop = document.getElementById("btnStop");
+  var statusDot = document.getElementById("statusDot");
+  var statusText = document.getElementById("statusText");
+  var bigAlert = document.getElementById("bigAlert");
+  var alertDetail = document.getElementById("alertDetail");
+  var tableWrap = document.getElementById("tableWrap");
+  var updateTime = document.getElementById("updateTime");
+  var logEl = document.getElementById("log");
+
+  // ── 站点下拉选择 ──────────────────────────────────────────
+  var allStations = [];   // [{name, code}, ...]
+  var HOT_STATIONS = [
+    "北京","北京南","北京西","北京北","北京朝阳","北京丰台",
+    "上海","上海虹桥","上海南",
+    "广州","广州南","广州东","广州白云",
+    "深圳","深圳北","深圳东",
+    "南京","南京南",
+    "杭州","杭州东","杭州西","杭州南",
+    "成都","成都东","成都南",
+    "武汉","武汉东",
+    "西安","西安北",
+    "重庆","重庆北","重庆西",
+    "天津","天津南","天津西",
+    "苏州","苏州北",
+    "郑州","郑州东",
+    "长沙","长沙南",
+    "青岛","青岛北",
+    "大连","大连北",
+    "厦门","厦门北",
+    "合肥","合肥南",
+    "济南","济南西","济南东",
+    "福州","福州南",
+    "昆明","昆明南",
+    "贵阳","贵阳北","贵阳东",
+    "哈尔滨","哈尔滨西",
+    "沈阳","沈阳北",
+    "石家庄","徐州东","无锡","常州","温州南","宁波","南昌","南昌西"
+  ];
+
+  function loadStations() {
+    fetch("/api/stations")
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok && d.stations) {
+          allStations = d.stations.sort(function (a, b) {
+            return a.name.localeCompare(b.name, "zh-CN");
+          });
+        }
+      })
+      .catch(function () {});
+  }
+  loadStations();
+
+  // 拼音首字母简易映射（用于按拼音搜索）
+  var PY_MAP = {
+    "啊":"a","阿":"a","哎":"a","哀":"a","爱":"a","安":"a","按":"a","暗":"a","昂":"a","凹":"a",
+    "八":"b","把":"b","白":"b","百":"b","班":"b","半":"b","办":"b","包":"b","宝":"b","保":"b",
+    "报":"b","北":"b","备":"b","本":"b","比":"b","边":"b","变":"b","标":"b","表":"b","别":"b",
+    "宾":"b","冰":"b","兵":"b","丙":"b","并":"b","博":"b","渤":"b","不":"b","步":"b","部":"b",
+    "擦":"c","才":"c","彩":"c","参":"c","仓":"c","藏":"c","曹":"c","草":"c","层":"c","查":"c",
+    "昌":"c","长":"c","常":"c","厂":"c","场":"c","超":"c","车":"c","陈":"c","城":"c","成":"c",
+    "承":"c","池":"c","赤":"c","冲":"c","崇":"c","出":"c","初":"c","楚":"c","川":"c","春":"c",
+    "磁":"c","从":"c","村":"c","存":"c",
+    "达":"d","打":"d","大":"d","带":"d","单":"d","当":"d","党":"d","到":"d","道":"d","的":"d",
+    "登":"d","等":"d","低":"d","迪":"d","地":"d","第":"d","点":"d","电":"d","店":"d","调":"d",
+    "顶":"d","定":"d","东":"d","冬":"d","都":"d","斗":"d","读":"d","独":"d","度":"d","渡":"d",
+    "端":"d","短":"d","段":"d","堆":"d","敦":"d","顿":"d","多":"d","朵":"d",
+    "额":"e","峨":"e","鄂":"e","恩":"e","耳":"e","二":"e",
+    "发":"f","法":"f","番":"f","方":"f","防":"f","房":"f","放":"f","飞":"f","非":"f","肥":"f",
+    "费":"f","分":"f","丰":"f","风":"f","封":"f","峰":"f","锋":"f","凤":"f","佛":"f","福":"f",
+    "扶":"f","涪":"f","抚":"f","府":"f","阜":"f","复":"f","富":"f","副":"f",
+    "嘎":"g","该":"g","改":"g","盖":"g","甘":"g","干":"g","感":"g","刚":"g","钢":"g","岗":"g",
+    "港":"g","高":"g","告":"g","哥":"g","革":"g","格":"g","个":"g","各":"g","根":"g","更":"g",
+    "工":"g","公":"g","功":"g","宫":"g","共":"g","贡":"g","沟":"g","古":"g","谷":"g","固":"g",
+    "故":"g","顾":"g","瓜":"g","关":"g","观":"g","官":"g","管":"g","馆":"g","光":"g","广":"g",
+    "归":"g","贵":"g","桂":"g","滚":"g","国":"g","果":"g","过":"g",
+    "哈":"h","海":"h","含":"h","韩":"h","汉":"h","好":"h","号":"h","合":"h","河":"h","黑":"h",
+    "很":"h","横":"h","红":"h","宏":"h","洪":"h","侯":"h","后":"h","呼":"h","湖":"h","虎":"h",
+    "互":"h","护":"h","花":"h","华":"h","化":"h","划":"h","怀":"h","欢":"h","环":"h","换":"h",
+    "黄":"h","回":"h","汇":"h","会":"h","惠":"h","火":"h","伙":"h","霍":"h",
+    "鸡":"j","积":"j","基":"j","吉":"j","极":"j","集":"j","几":"j","己":"j","计":"j","记":"j",
+    "际":"j","季":"j","济":"j","继":"j","寄":"j","加":"j","家":"j","嘉":"j","甲":"j","价":"j",
+    "间":"j","建":"j","江":"j","将":"j","姜":"j","蒋":"j","交":"j","角":"j","脚":"j","叫":"j",
+    "教":"j","街":"j","节":"j","结":"j","解":"j","界":"j","金":"j","今":"j","津":"j","锦":"j",
+    "近":"j","进":"j","晋":"j","京":"j","经":"j","荆":"j","景":"j","井":"j","精":"j","九":"j",
+    "久":"j","酒":"j","就":"j","居":"j","局":"j","举":"j","具":"j","句":"j","巨":"j","聚":"j",
+    "军":"j","均":"j",
+    "喀":"k","开":"k","凯":"k","康":"k","考":"k","科":"k","可":"k","克":"k","客":"k","肯":"k",
+    "空":"k","口":"k","库":"k","快":"k","宽":"k","矿":"k","奎":"k","昆":"k",
+    "拉":"l","来":"l","兰":"l","蓝":"l","廊":"l","朗":"l","浪":"l","劳":"l","老":"l","乐":"l",
+    "雷":"l","冷":"l","离":"l","黎":"l","里":"l","理":"l","力":"l","历":"l","利":"l","立":"l",
+    "丽":"l","连":"l","联":"l","莲":"l","良":"l","凉":"l","梁":"l","两":"l","亮":"l","辽":"l",
+    "聊":"l","林":"l","临":"l","灵":"l","岭":"l","凌":"l","零":"l","领":"l","流":"l","柳":"l",
+    "六":"l","龙":"l","隆":"l","楼":"l","芦":"l","鲁":"l","陆":"l","鹿":"l","路":"l","绿":"l",
+    "旅":"l","滦":"l","罗":"l","洛":"l","落":"l",
+    "麻":"m","马":"m","买":"m","满":"m","漫":"m","芒":"m","茂":"m","么":"m","没":"m","眉":"m",
+    "梅":"m","美":"m","门":"m","蒙":"m","孟":"m","米":"m","密":"m","绵":"m","棉":"m","免":"m",
+    "面":"m","庙":"m","民":"m","名":"m","明":"m","命":"m","摸":"m","磨":"m","末":"m","莫":"m",
+    "墨":"m","木":"m","目":"m","牧":"m","穆":"m",
+    "拿":"n","那":"n","纳":"n","乃":"n","南":"n","难":"n","内":"n","能":"n","你":"n","年":"n",
+    "娘":"n","鸟":"n","宁":"n","牛":"n","农":"n","弄":"n","努":"n","女":"n",
+    "哦":"o","欧":"o","偶":"o",
+    "帕":"p","排":"p","盘":"p","判":"p","旁":"p","跑":"p","培":"p","配":"p","喷":"p","朋":"p",
+    "蓬":"p","鹏":"p","批":"p","皮":"p","片":"p","漂":"p","平":"p","凭":"p","坡":"p","蒲":"p",
+    "普":"p","浦":"p",
+    "七":"q","齐":"q","其":"q","奇":"q","起":"q","气":"q","千":"q","前":"q","钱":"q","强":"q",
+    "桥":"q","秦":"q","青":"q","清":"q","庆":"q","穷":"q","秋":"q","丘":"q","衢":"q","全":"q",
+    "泉":"q","曲":"q","渠":"q","取":"q","去":"q","圈":"q","权":"q","确":"q","群":"q",
+    "然":"r","让":"r","热":"r","人":"r","任":"r","日":"r","荣":"r","容":"r","融":"r","如":"r",
+    "汝":"r","乳":"r","瑞":"r","润":"r","若":"r",
+    "三":"s","色":"s","山":"s","善":"s","上":"s","尚":"s","少":"s","韶":"s","绍":"s","社":"s",
+    "深":"s","神":"s","升":"s","生":"s","声":"s","省":"s","胜":"s","师":"s","十":"s","石":"s",
+    "时":"s","实":"s","使":"s","始":"s","世":"s","市":"s","事":"s","是":"s","收":"s","手":"s",
+    "首":"s","寿":"s","受":"s","书":"s","舒":"s","蜀":"s","树":"s","双":"s","水":"s","顺":"s",
+    "说":"s","思":"s","四":"s","松":"s","宋":"s","送":"s","苏":"s","肃":"s","算":"s","虽":"s",
+    "随":"s","遂":"s","孙":"s","所":"s","索":"s",
+    "他":"t","她":"t","它":"t","台":"t","太":"t","泰":"t","坛":"t","谈":"t","汤":"t","唐":"t",
+    "塘":"t","桃":"t","特":"t","腾":"t","提":"t","体":"t","天":"t","田":"t","条":"t","铁":"t",
+    "厅":"t","亭":"t","通":"t","同":"t","铜":"t","统":"t","头":"t","图":"t","土":"t","团":"t",
+    "吐":"t","推":"t","屯":"t",
+    "瓦":"w","外":"w","湾":"w","万":"w","汪":"w","王":"w","网":"w","往":"w","望":"w","威":"w",
+    "微":"w","为":"w","围":"w","维":"w","伟":"w","尾":"w","委":"w","卫":"w","未":"w","位":"w",
+    "渭":"w","温":"w","文":"w","闻":"w","翁":"w","我":"w","乌":"w","无":"w","五":"w","武":"w",
+    "舞":"w","务":"w","物":"w","误":"w","梧":"w",
+    "西":"x","息":"x","希":"x","溪":"x","锡":"x","习":"x","席":"x","喜":"x","系":"x","夏":"x",
+    "仙":"x","先":"x","县":"x","现":"x","线":"x","乡":"x","香":"x","湘":"x","襄":"x","祥":"x",
+    "向":"x","象":"x","小":"x","孝":"x","效":"x","些":"x","新":"x","信":"x","兴":"x","星":"x",
+    "行":"x","形":"x","醒":"x","杏":"x","雄":"x","修":"x","秀":"x","徐":"x","许":"x","序":"x",
+    "续":"x","宣":"x","悬":"x","选":"x","学":"x","雪":"x","寻":"x","浔":"x","循":"x",
+    "牙":"y","亚":"y","烟":"y","延":"y","严":"y","沿":"y","盐":"y","眼":"y","演":"y","雁":"y",
+    "燕":"y","央":"y","扬":"y","阳":"y","杨":"y","洋":"y","养":"y","样":"y","邀":"y","窑":"y",
+    "姚":"y","要":"y","也":"y","业":"y","叶":"y","一":"y","伊":"y","依":"y","仪":"y","宜":"y",
+    "移":"y","遗":"y","义":"y","艺":"y","易":"y","益":"y","意":"y","因":"y","银":"y","引":"y",
+    "应":"y","英":"y","鹰":"y","营":"y","影":"y","用":"y","永":"y","勇":"y","优":"y","尤":"y",
+    "由":"y","油":"y","有":"y","又":"y","于":"y","余":"y","鱼":"y","榆":"y","虞":"y","与":"y",
+    "宇":"y","雨":"y","语":"y","玉":"y","育":"y","预":"y","元":"y","园":"y","原":"y","源":"y",
+    "远":"y","月":"y","岳":"y","越":"y","云":"y","运":"y","韵":"y",
+    "杂":"z","在":"z","早":"z","造":"z","则":"z","泽":"z","增":"z","展":"z","站":"z","张":"z",
+    "章":"z","长":"z","招":"z","赵":"z","哲":"z","这":"z","真":"z","镇":"z","争":"z","整":"z",
+    "正":"z","之":"z","支":"z","知":"z","织":"z","直":"z","值":"z","指":"z","至":"z","志":"z",
+    "治":"z","中":"z","钟":"z","终":"z","种":"z","众":"z","重":"z","州":"z","周":"z","朱":"z",
+    "诸":"z","主":"z","住":"z","注":"z","祝":"z","著":"z","专":"z","转":"z","庄":"z","装":"z",
+    "壮":"z","状":"z","追":"z","准":"z","资":"z","子":"z","自":"z","字":"z","紫":"z","宗":"z",
+    "总":"z","纵":"z","走":"z","奏":"z","租":"z","足":"z","族":"z","组":"z","最":"z","遵":"z",
+    "遵":"z","左":"z","做":"z","作":"z","座":"z","涿":"z","鄯":"s","芷":"z","蕲":"q",
+    "潢":"h","浏":"l","滕":"t","邳":"p","邛":"q","郏":"j","郓":"y","鄄":"j","莘":"s",
+    "岑":"c","岚":"l","岫":"x","峄":"y","崂":"l","嵊":"s","嶂":"z",
+    "汶":"w","沂":"y","沅":"y","沔":"m","沱":"t","泸":"l","淅":"x","澧":"l","渑":"m",
+    "泗":"s","泾":"j","洮":"t","洹":"h","浈":"z","潼":"t","漯":"l","漳":"z","漾":"y",
+    "潇":"x","澴":"h","濮":"p","瀚":"h","瀛":"y","濯":"z",
+    "杞":"q","枞":"z","柘":"z","栟":"b","桦":"h","桠":"y","棣":"d",
+    "犍":"q","猇":"x","鄠":"h","郫":"p","郢":"y","郧":"y","鄞":"y",
+    "砀":"d","盱":"x","眙":"y","睢":"s","睎":"x",
+    "旌":"j","晟":"s","晖":"h","晗":"h","晔":"y"
+  };
+
+  function getPinyin(name) {
+    var py = "";
+    for (var i = 0; i < name.length; i++) {
+      py += (PY_MAP[name[i]] || name[i]);
+    }
+    return py;
+  }
+
+  function matchStation(query, station) {
+    if (!query) return true;
+    var q = query.toLowerCase().trim();
+    var name = station.name;
+    // 精确匹配站名
+    if (name === q) return true;
+    // 站名包含
+    if (name.indexOf(q) >= 0) return true;
+    // 拼音匹配
+    var py = getPinyin(name);
+    if (py.indexOf(q) >= 0) return true;
+    // 拼音首字母匹配
+    var initials = "";
+    for (var i = 0; i < name.length; i++) {
+      initials += (PY_MAP[name[i]] || name[i]).charAt(0);
+    }
+    if (initials.indexOf(q) >= 0) return true;
+    return false;
+  }
+
+  function setupStationPicker(inputEl, optionsEl) {
+    var activeIdx = -1;
+    var currentList = [];
+    var isOpen = false;
+
+    function renderList(items) {
+      currentList = items;
+      activeIdx = -1;
+      if (items.length === 0) {
+        optionsEl.innerHTML = '<div class="station-empty">无匹配站点</div>';
+        return;
+      }
+      var html = items.slice(0, 50).map(function (s, i) {
+        return '<div class="station-option" data-idx="' + i + '" data-name="' + s.name + '">' +
+          '<span>' + s.name + '</span><small>' + s.code + '</small></div>';
+      }).join("");
+      optionsEl.innerHTML = html;
+      // 绑定点击
+      optionsEl.querySelectorAll(".station-option").forEach(function (el) {
+        el.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+          selectStation(el.getAttribute("data-name"));
+        });
+      });
+    }
+
+    function showDropdown() {
+      if (isOpen) return;
+      isOpen = true;
+      optionsEl.classList.add("show");
+      inputEl.setAttribute("aria-expanded", "true");
+    }
+
+    function hideDropdown() {
+      isOpen = false;
+      optionsEl.classList.remove("show");
+      inputEl.setAttribute("aria-expanded", "false");
+      activeIdx = -1;
+    }
+
+    function selectStation(name) {
+      inputEl.value = name;
+      hideDropdown();
+      inputEl.focus();
+    }
+
+    function setActive(idx) {
+      var items = optionsEl.querySelectorAll(".station-option");
+      items.forEach(function (el) { el.classList.remove("active"); });
+      if (idx >= 0 && idx < items.length) {
+        activeIdx = idx;
+        items[idx].classList.add("active");
+        items[idx].scrollIntoView({ block: "nearest" });
+      }
+    }
+
+    function filterAndShow() {
+      var q = inputEl.value.trim();
+      var results;
+      if (!q) {
+        // 无输入时显示热门站点
+        var hotSet = new Set(HOT_STATIONS);
+        results = allStations.filter(function (s) { return hotSet.has(s.name); });
+        // 按 HOT_STATIONS 顺序排列
+        results.sort(function (a, b) {
+          return HOT_STATIONS.indexOf(a.name) - HOT_STATIONS.indexOf(b.name);
+        });
+      } else {
+        results = allStations.filter(function (s) { return matchStation(q, s); });
+      }
+      renderList(results);
+      showDropdown();
+    }
+
+    inputEl.addEventListener("focus", filterAndShow);
+
+    inputEl.addEventListener("input", filterAndShow);
+
+    inputEl.addEventListener("blur", function () {
+      // 延迟隐藏，让 mousedown 有机会先触发
+      setTimeout(hideDropdown, 150);
+    });
+
+    inputEl.addEventListener("keydown", function (e) {
+      if (!isOpen) return;
+      var items = optionsEl.querySelectorAll(".station-option");
+      var len = items.length;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActive(activeIdx < len - 1 ? activeIdx + 1 : 0);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActive(activeIdx > 0 ? activeIdx - 1 : len - 1);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (activeIdx >= 0 && activeIdx < len) {
+          selectStation(items[activeIdx].getAttribute("data-name"));
+        } else if (currentList.length > 0) {
+          selectStation(currentList[0].name);
+        }
+      } else if (e.key === "Escape") {
+        hideDropdown();
+      }
+    });
+  }
+
+  setupStationPicker(fromEl, document.getElementById("fromOptions"));
+  setupStationPicker(toEl, document.getElementById("toOptions"));
+
+  // 默认日期：明天
+  var d = new Date();
+  d.setDate(d.getDate() + 1);
+  dateEl.value = d.toISOString().slice(0, 10);
+
+  var running = false;
+  var timer = null;
+  var alerted = false;
+  var hitCount = 0;
+  var autoJump = document.getElementById("autoJump");
+  var jumpedTrains = new Set();   // 已自动跳转过的车次，避免重复打开
+
+  // 已排除的车次（持久化到 localStorage）
+  var EX_KEY = "ticket_monitor_excluded_v1";
+  var excluded = loadExcluded();
+
+  function loadExcluded() {
+    try {
+      var raw = localStorage.getItem(EX_KEY);
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch (e) { return new Set(); }
+  }
+  function saveExcluded() {
+    try { localStorage.setItem(EX_KEY, JSON.stringify(Array.from(excluded))); } catch (e) {}
+  }
+  function isExcluded(trainNo) { return excluded.has(trainNo); }
+  function toggleExcluded(trainNo) {
+    if (excluded.has(trainNo)) excluded.delete(trainNo);
+    else excluded.add(trainNo);
+    saveExcluded();
+    renderExcludedBar();
+  }
+  function clearExcluded() {
+    excluded.clear();
+    saveExcluded();
+    renderExcludedBar();
+  }
+  function renderExcludedBar() {
+    var bar = document.getElementById("excludedBar");
+    var list = document.getElementById("excludedList");
+    if (excluded.size === 0) { bar.style.display = "none"; return; }
+    bar.style.display = "flex";
+    list.innerHTML = Array.from(excluded).sort().map(function (c) {
+      return '<span class="excluded-tag">' + c +
+        ' <button title="取消排除">✕</button></span>';
+    }).join("");
+    list.querySelectorAll("button").forEach(function (b) {
+      b.addEventListener("click", function () { toggleExcluded(b.parentNode.textContent.replace("✕", "").trim()); });
+    });
+  }
+
+  // 席别列名 -> 表格标题
+  var SEAT_COLS = ["二等座", "一等座", "商务座", "无座", "软卧", "硬卧", "硬座"];
+
+  function log(msg, cls) {
+    var t = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    var line = document.createElement("div");
+    line.className = cls || "";
+    line.textContent = "[" + t + "] " + msg;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function selectedSeats() {
+    var out = [];
+    document.querySelectorAll(".seat:checked").forEach(function (c) {
+      out.push(c.value);
+    });
+    return out;
+  }
+
+  function getIntervalSeconds() {
+    if (intervalEl.value === "custom") {
+      var n = parseInt(customIntervalEl.value, 10);
+      return isNaN(n) ? 45 : Math.max(10, n);
+    }
+    return parseInt(intervalEl.value, 10);
+  }
+
+  intervalEl.addEventListener("change", function () {
+    customWrap.style.display = intervalEl.value === "custom" ? "block" : "none";
+  });
+
+  function inTimeWindow(t) {
+    // 判断车次发车时间是否在监测时间段内
+    var parts = (t || "").split(":");
+    if (parts.length < 2) return true;
+    var hhmm = parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+    var from = timeFromEl.value.split(":").map(Number);
+    var to = timeToEl.value.split(":").map(Number);
+    var f = from[0] * 60 + from[1];
+    var tt = to[0] * 60 + to[1];
+    return hhmm >= f && hhmm <= tt;
+  }
+
+  function hasTicket(value) {
+    if (value == null) return false;
+    var s = String(value).trim();
+    if (s === "" || s === "无" || s === "—" || s === "--") return false;
+    // "有" 或数字都算有票
+    return true;
+  }
+
+  function renderTrains(trains, seats) {
+    if (!trains || trains.length === 0) {
+      tableWrap.innerHTML = '<div class="empty">暂无车次数据</div>';
+      updateTime.textContent = "";
+      renderExcludedBar();
+      return;
+    }
+    var cols = SEAT_COLS.filter(function (c) { return seats.indexOf(c) >= 0; });
+    var html = '<table><thead><tr>';
+    html += "<th>车次</th><th>出发</th><th>到达</th><th>历时</th>";
+    cols.forEach(function (c) { html += "<th>" + c + "</th>"; });
+    html += "<th>操作</th>";
+    html += "</tr></thead><tbody>";
+
+    trains.forEach(function (t) {
+      var trainNo = t["车次"];
+      var ex = isExcluded(trainNo);
+      var avail = false;
+      var buySeats = [];
+      var cells = cols.map(function (c) {
+        var v = t[c];
+        var cls = "seat-none", txt = v || "无";
+        if (hasTicket(v)) { cls = "seat-has"; txt = v === "有" ? "有票" : v; avail = true; buySeats.push(c); }
+        else if (t["候补"] === "Y" || t["候补"] === "1") { cls = "seat-houbu"; txt = "候补"; }
+        return '<td class="' + cls + '">' + txt + "</td>";
+      }).join("");
+
+      html += '<tr class="' + (ex ? "excluded" : (avail ? "available" : "")) + '">';
+      html += '<td class="train">' + trainNo + "</td>";
+      html += "<td>" + t["发车"] + "</td>";
+      html += "<td>" + t["到达"] + "</td>";
+      html += "<td>" + t["历时"] + "</td>";
+      html += cells;
+      html += '<td>' +
+        '<button class="btn-ex ' + (ex ? "on" : "") + '" data-train="' + trainNo + '">' +
+        (ex ? "取消排除" : "排除") + "</button>" +
+        (avail ? ' <button class="btn-buy" data-buy="' + trainNo + '" data-seats="' + buySeats.join(",") + '">去购票</button>' : "") +
+        "</td>";
+      html += "</tr>";
+    });
+    html += "</tbody></table>";
+    tableWrap.innerHTML = html;
+    updateTime.textContent = "更新于 " + new Date().toLocaleTimeString("zh-CN", { hour12: false });
+
+    tableWrap.querySelectorAll(".btn-ex").forEach(function (b) {
+      b.addEventListener("click", function () { toggleExcluded(b.getAttribute("data-train")); });
+    });
+    tableWrap.querySelectorAll(".btn-buy").forEach(function (b) {
+      b.addEventListener("click", function () {
+        openBooking(b.getAttribute("data-buy"), b.getAttribute("data-seats").split(","));
+      });
+    });
+    renderExcludedBar();
+  }
+
+  function fireAlert(hits) {
+    alerted = true;
+    hitCount++;
+    // 按车次分组，一辆车一行
+    var byTrain = {};
+    hits.forEach(function (h) {
+      if (!byTrain[h["车次"]]) {
+        byTrain[h["车次"]] = { 发车: h["发车"], 历时: h["历时"], 席别: [] };
+      }
+      byTrain[h["车次"]]["席别"].push(h.seatType);
+    });
+    var lines = Object.keys(byTrain).map(function (c) {
+      var t = byTrain[c];
+      return c + "　" + t["发车"] + "开　历时" + t["历时"] + "　" + t["席别"].join("、") + "有票";
+    }).join("\n");
+    alertDetail.textContent = lines;
+    alertDetail.style.whiteSpace = "pre-wrap";
+    alertDetail.style.textAlign = "left";
+    alertDetail.style.fontSize = "22px";
+    alertDetail.style.lineHeight = "1.6";
+    bigAlert.classList.add("show");
+    document.body.classList.add("alert");
+    statusDot.className = "dot alert";
+    statusText.textContent = "发现余票！共 " + hits.length + " 个席别有票";
+    log("★ 有票！\n" + lines, "hit");
+
+    // 每个有票车次生成一个跳转按钮
+    var btnWrap = document.getElementById("alertButtons");
+    btnWrap.innerHTML = Object.keys(byTrain).map(function (c) {
+      var seats = hits.filter(function (h) { return h["车次"] === c; })
+        .map(function (h) { return h.seatType; });
+      return '<button class="btn-buy" style="font-size:16px;padding:10px 22px;" data-train="' + c + '" data-seats="' + seats.join(",") + '">立即购票 ' + c + '</button>';
+    }).join(" ");
+    btnWrap.querySelectorAll(".btn-buy").forEach(function (b) {
+      b.addEventListener("click", function () {
+        openBooking(b.getAttribute("data-train"), b.getAttribute("data-seats").split(","));
+      });
+    });
+
+    // 响铃（重复多次，确保听到）
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var beep = function () {
+        var o = ctx.createOscillator();
+        var g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.type = "square";
+        o.frequency.value = 880;
+        g.gain.value = 0.4;
+        o.start();
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+        o.stop(ctx.currentTime + 0.45);
+      };
+      for (var i = 0; i < 5; i++) setTimeout(beep, i * 500);
+    } catch (e) {}
+
+    // 桌面通知
+    try {
+      if (Notification.permission === "granted") {
+        new Notification("12306 有票了！", { body: detail });
+      }
+    } catch (e) {}
+  }
+
+  function clearAlert() {
+    alerted = false;
+    bigAlert.classList.remove("show");
+    document.body.classList.remove("alert");
+    jumpedTrains.clear();   // 本轮无票后重置，下一轮有票可再次跳转
+  }
+
+  function openBooking(trainNo, seatTypes) {
+    var from = fromEl.value.trim();
+    var to = toEl.value.trim();
+    var date = dateEl.value;
+    if (!from || !to || !date || !trainNo) {
+      log("参数不完整，无法跳转", "err");
+      return;
+    }
+    var qs = "?from=" + encodeURIComponent(from) +
+      "&to=" + encodeURIComponent(to) +
+      "&date=" + encodeURIComponent(date) +
+      "&train_no=" + encodeURIComponent(trainNo) +
+      "&seat=" + encodeURIComponent(seatTypes.join(","));
+    log("正在获取 " + trainNo + " 的购票链接...", "ok");
+    fetch("/api/booking-url" + qs)
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok && d.url) {
+          log("已打开购票页：" + trainNo + "（" + seatTypes.join("/") + "）", "hit");
+          window.open(d.url, "_blank");
+        } else {
+          log("购票链接生成失败：" + (d.url || "站点代号缺失"), "err");
+        }
+      })
+      .catch(function (e) { log("跳转失败：" + e, "err"); });
+  }
+
+  function maybeAutoJump(hits) {
+    if (!autoJump || !autoJump.checked) return;
+    var seen = {};
+    hits.forEach(function (h) { seen[h["车次"]] = true; });
+    Object.keys(seen).forEach(function (c) {
+      if (jumpedTrains.has(c)) return;
+      jumpedTrains.add(c);
+      var seats = hits.filter(function (h) { return h["车次"] === c; })
+        .map(function (h) { return h.seatType; });
+      openBooking(c, seats);
+    });
+  }
+
+  function queryOnce() {
+    if (!running) return;
+    var from = fromEl.value.trim();
+    var to = toEl.value.trim();
+    var date = dateEl.value;
+    var seats = selectedSeats();
+
+    if (!from || !to || !date) {
+      log("请填写完整的出发站/到达站/日期", "err");
+      return;
+    }
+    if (seats.length === 0) {
+      log("请至少选择一个监测席别", "err");
+      return;
+    }
+
+    var url = "/api/query?from=" + encodeURIComponent(from) +
+      "&to=" + encodeURIComponent(to) +
+      "&date=" + encodeURIComponent(date);
+
+    fetch(url)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!running) return;
+        if (!data.ok) {
+          statusText.textContent = "查询失败：" + data.error;
+          statusDot.className = "dot";
+          log("查询失败：" + data.error, "err");
+          renderTrains([], seats);
+          return;
+        }
+
+        // 按发车时间过滤，只保留时间段内的车次
+        var filtered = data.trains.filter(function (t) {
+          return inTimeWindow(t["发车"]);
+        });
+
+        // 排除已排除的车次（不显示、不参与告警）
+        var visible = filtered.filter(function (t) { return !isExcluded(t["车次"]); });
+
+        renderTrains(visible, seats);
+
+        // 判断是否有票（只看未排除的车次）
+        var hits = [];
+        visible.forEach(function (t) {
+          seats.forEach(function (s) {
+            if (hasTicket(t[s])) {
+              hits.push({ 车次: t["车次"], 发车: t["发车"], 历时: t["历时"], seatType: s });
+            }
+          });
+        });
+
+        if (hits.length > 0) {
+          fireAlert(hits);
+          maybeAutoJump(hits);
+        } else {
+          // 本轮无余票：清除上一轮的告警状态，避免"有票了"横幅残留
+          clearAlert();
+          statusDot.className = "dot running";
+          statusText.textContent = "监测中 · 每 " + getIntervalSeconds() + " 秒刷新 · " +
+            timeFromEl.value + "-" + timeToEl.value + " 时段内暂无余票（" + filtered.length + " 趟车）";
+          log("已刷新，" + data.trains.length + " 个车次，时段内 " + filtered.length + " 趟，暂无余票", "ok");
+        }
+      })
+      .catch(function (e) {
+        if (!running) return;
+        statusText.textContent = "请求出错：" + e;
+        statusDot.className = "dot";
+        log("请求出错：" + e, "err");
+      });
+  }
+
+  function tick() {
+    if (!running) return;
+    queryOnce();
+  }
+
+  function start() {
+    if (running) return;
+    running = true;
+    alerted = false;
+    hitCount = 0;
+    clearAlert();
+
+    // 请求桌面通知权限
+    try {
+      if ("Notification" in window && Notification.permission === "default") {
+        Notification.requestPermission();
+      }
+    } catch (e) {}
+
+    btnStart.disabled = true;
+    btnStop.disabled = false;
+    statusDot.className = "dot running";
+    statusText.textContent = "监测中 · 每 " + getIntervalSeconds() + " 秒刷新 · " +
+      timeFromEl.value + "-" + timeToEl.value + " 时段";
+    log("开始监测：" + fromEl.value + " → " + toEl.value + " · " + dateEl.value +
+        " · " + timeFromEl.value + "-" + timeToEl.value + " · 席别[" + selectedSeats().join("/") + "]", "ok");
+
+    tick();
+    timer = setInterval(tick, getIntervalSeconds() * 1000);
+  }
+
+  function stop() {
+    running = false;
+    if (timer) { clearInterval(timer); timer = null; }
+    btnStart.disabled = false;
+    btnStop.disabled = true;
+    statusDot.className = "dot";
+    statusText.textContent = "已停止";
+    clearAlert();
+    log("监测已停止", "ok");
+  }
+
+  btnStart.addEventListener("click", start);
+  btnStop.addEventListener("click", stop);
+  var btnClearEx = document.getElementById("btnClearEx");
+  if (btnClearEx) btnClearEx.addEventListener("click", clearExcluded);
+
+  renderExcludedBar();
+})();
+</script>
+</body>
+</html>
